@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lokales Buchhaltungstool (Single File)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --muted: #94a3b8;
+      --text: #e5e7eb;
+      --accent: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --line: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: linear-gradient(180deg, #020617 0%, #0b1022 100%);
+      color: var(--text);
+    }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    h1, h2, h3 { margin: 0 0 12px; }
+    .grid { display: grid; gap: 12px; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .panel {
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      backdrop-filter: blur(6px);
+    }
+    input, select, textarea, button {
+      width: 100%;
+      background: #0b1220;
+      color: var(--text);
+      border: 1px solid #263245;
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+    button { cursor: pointer; background: #18263d; }
+    button:hover { filter: brightness(1.1); }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row > * { flex: 1; }
+    .row .w-auto { flex: 0 0 auto; width: auto; }
+    .small { color: var(--muted); font-size: 12px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      border: 1px solid #334155;
+      background: #101827;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      border-bottom: 1px solid #1f2937;
+      padding: 8px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { color: #cbd5e1; position: sticky; top: 0; background: #0f172a; z-index: 2; }
+    .table-wrap { max-height: 52vh; overflow: auto; border: 1px solid #1f2937; border-radius: 10px; }
+    .toggle { display: inline-flex; border-radius: 999px; overflow: hidden; border: 1px solid #334155; }
+    .toggle button { border: 0; border-right: 1px solid #334155; border-radius: 0; width: auto; min-width: 80px; padding: 6px 8px; }
+    .toggle button:last-child { border-right: 0; }
+    .toggle .active.private { background: #b91c1c; }
+    .toggle .active.standard { background: #334155; }
+    .toggle .active.business { background: #166534; }
+    .kpi { font-size: 20px; font-weight: 700; }
+    .tag { font-size: 11px; border-radius: 6px; padding: 2px 5px; display: inline-block; }
+    .tag.recurring { background: #3f6212; }
+    .tag.private { background: #7f1d1d; }
+    .tag.business { background: #065f46; }
+    .gallery { display: flex; flex-wrap: wrap; gap: 8px; }
+    .thumb { width: 68px; height: 68px; object-fit: cover; border: 1px solid #374151; border-radius: 8px; cursor: pointer; }
+    .danger { background: #7f1d1d; }
+    .good { background: #14532d; }
+    .warn { background: #78350f; }
+    .modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+      display: none; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal.open { display: flex; }
+    .modal-content { max-width: 95vw; max-height: 95vh; }
+    .modal-content img { max-width: 100%; max-height: 95vh; }
+    .inline-fields input, .inline-fields select { min-width: 120px; }
+    .sticky-actions { position: sticky; bottom: 0; background: #0b1324; border-top: 1px solid #1f2937; padding: 8px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Lokales Buchhaltungstool <span class="pill">Single HTML</span></h1>
+  <p class="small">Alle Daten bleiben lokal im Browser (localStorage). Für dauerhafte Sicherung: Backup-Datei exportieren.</p>
+
+  <div class="grid grid-3">
+    <section class="panel">
+      <h2>CSV-Import</h2>
+      <div class="row">
+        <input id="bankName" placeholder="Bankinstitut (z. B. Sparkasse)" />
+        <input id="csvFile" type="file" accept=".csv,text/csv" />
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="importBtn" class="good">CSV importieren</button>
+      </div>
+      <p class="small">Erkannt werden Spalten mit Datum/Text/Betrag (typische Varianten).</p>
+      <p id="importStatus" class="small"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Filter & Aktionen</h2>
+      <div class="grid">
+        <select id="bankFilter"><option value="">Alle Banken</option></select>
+        <label class="row"><input id="hidePrivate" class="w-auto" type="checkbox" /> <span>Private Einträge ausblenden</span></label>
+        <input id="search" placeholder="Suche in Buchungstext/Lieferant/Kategorie" />
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="resetVisible" class="warn">Sichtbare Buchungen zurücksetzen</button>
+        <button id="hardReset" class="danger">Alles löschen (ohne Wiederkehrend-Index)</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Backup / Restore</h2>
+      <div class="row"><button id="backupBtn">Backup herunterladen</button><input id="restoreFile" type="file" accept="application/json" /></div>
+      <div class="row" style="margin-top:8px;"><button id="restoreBtn">Backup einspielen</button><button id="exportWord">Export .doc</button></div>
+      <div class="row" style="margin-top:8px;"><button id="exportPdf">Export PDF (Druckansicht)</button></div>
+      <p class="small">Export enthält nur berufliche Buchungen inkl. Belege und Bankinstitut.</p>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:12px;">
+    <h2>Buchungen</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Bank</th><th>Buchungsdatum</th><th>Buchungstext</th><th>Betrag</th><th>Status</th><th>Berufliche Details</th><th>Belege</th>
+          </tr>
+        </thead>
+        <tbody id="bookingsBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:12px;">
+    <h2>Dashboard & Auswertungen</h2>
+    <div class="row">
+      <input id="monthFilter" type="month" class="w-auto" style="max-width:200px;" />
+      <button id="refreshDash" class="w-auto" style="max-width:180px;">Auswertung aktualisieren</button>
+    </div>
+    <div class="grid grid-3" style="margin-top:8px;">
+      <div><div class="small">Einnahmen</div><div id="kpiIncome" class="kpi">0,00 €</div></div>
+      <div><div class="small">Ausgaben</div><div id="kpiExpense" class="kpi">0,00 €</div></div>
+      <div><div class="small">Saldo</div><div id="kpiBalance" class="kpi">0,00 €</div></div>
+    </div>
+    <div class="grid grid-2" style="margin-top:10px;">
+      <div><h3>Kategorie-Summen</h3><div id="catStats" class="small"></div></div>
+      <div><h3>USt-Übersicht</h3><div id="vatStats" class="small"></div></div>
+    </div>
+    <div style="margin-top:10px;"><h3>Monatsvergleich (beruflich)</h3><div id="monthCompare" class="small"></div></div>
+  </section>
+
+  <section class="panel" style="margin-top:12px;">
+    <h2>Rechnungen</h2>
+    <div class="row">
+      <input id="invoiceCustomer" placeholder="Kunde" />
+      <input id="invoiceDesc" placeholder="Leistungsbeschreibung" />
+      <input id="invoiceAmount" type="number" step="0.01" placeholder="Betrag" />
+      <button id="createInvoice" class="good">Rechnung erstellen</button>
+    </div>
+    <div id="invoiceList" class="small" style="margin-top:8px;"></div>
+  </section>
+</div>
+
+<div id="imgModal" class="modal" onclick="this.classList.remove('open')"><div class="modal-content"><img id="imgModalSrc" alt="Beleg"/></div></div>
+
+<script>
+(() => {
+  const KEY = 'ledger_single_file_v1';
+  const RECUR_KEY = 'ledger_recurring_index_v1';
+  const CATEGORY_KEY = 'ledger_categories_v1';
+  const COUNTRY_KEY = 'ledger_country_list_v1';
+  const INVOICE_KEY = 'ledger_invoice_state_v1';
+  const defaultCountries = ['Österreich','Deutschland','Schweiz','Italien','Frankreich','Spanien','Niederlande','Belgien','Polen','Tschechien','Ungarn','Slowakei','Slowenien','USA','Vereinigtes Königreich'];
+
+  const state = load(KEY, {
+    nextId: 1,
+    bookings: [],
+    textRules: {},
+    banks: [],
+    recurringTemplates: {},
+  });
+  let recurringIndex = load(RECUR_KEY, {});
+  let categories = load(CATEGORY_KEY, []);
+  let countries = load(COUNTRY_KEY, defaultCountries);
+  const invoices = load(INVOICE_KEY, { nextNumber: 1, items: [] });
+
+  const el = id => document.getElementById(id);
+  const amountFmt = n => (n||0).toLocaleString('de-AT', { style:'currency', currency:'EUR' });
+
+  function load(key, fallback){ try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
+  function saveAll(){
+    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(RECUR_KEY, JSON.stringify(recurringIndex));
+    localStorage.setItem(CATEGORY_KEY, JSON.stringify([...new Set(categories)].filter(Boolean)));
+    localStorage.setItem(COUNTRY_KEY, JSON.stringify([...new Set(countries)].filter(Boolean)));
+    localStorage.setItem(INVOICE_KEY, JSON.stringify(invoices));
+  }
+
+  function normalizeText(t){ return String(t||'').toLowerCase().replace(/\s+/g,' ').replace(/[^\p{L}\p{N}\s]/gu,'').trim(); }
+  function recurringKey(entry){ return normalizeText(entry.text).slice(0, 70) + '|' + Math.round((entry.amount||0)*100); }
+  function parseAmount(v){
+    if (typeof v === 'number') return v;
+    const s = String(v||'').trim().replace(/\./g,'').replace(',', '.').replace(/[^0-9.-]/g, '');
+    const n = parseFloat(s); return Number.isFinite(n) ? n : 0;
+  }
+  function parseDate(v){
+    if (!v) return new Date().toISOString().slice(0,10);
+    const s = String(v).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
+    if (m) {
+      const y = m[3].length === 2 ? '20'+m[3] : m[3];
+      return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    }
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0,10) : d.toISOString().slice(0,10);
+  }
+
+  function guessColumns(headers){
+    const h = headers.map(x => normalizeText(x));
+    const find = arr => h.findIndex(x => arr.some(k => x.includes(k)));
+    return {
+      date: find(['buchungsdatum','buchungstag','datum','valuta','date','posting date','transaction date']),
+      text: find(['buchungstext','verwendungszweck','empfanger','empfänger','zahlungspflichtiger','text','beschreibung','description','reference','details']),
+      amount: find(['betrag','betrag eur','amount','umsatz','wert','value','credit','debit'])
+    };
+  }
+
+  function setImportStatus(msg, kind){
+    const node = el('importStatus');
+    if (!node) return;
+    node.textContent = msg || '';
+    node.style.color = kind === 'error' ? '#fca5a5' : kind === 'ok' ? '#86efac' : '#94a3b8';
+  }
+
+  function looksLikeDate(v){
+    const s = String(v || '').trim();
+    if (!s) return false;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return true;
+    if (/^\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}$/.test(s)) return true;
+    const d = new Date(s);
+    return !Number.isNaN(d.getTime());
+  }
+
+  function detectColumnsFromData(rows){
+    const first = rows[0] || [];
+    const width = first.length;
+    const sample = rows.slice(0, Math.min(rows.length, 30));
+    const score = Array.from({ length: width }, () => ({ date:0, amount:0, text:0 }));
+    sample.forEach(r => {
+      for (let i = 0; i < width; i++) {
+        const cell = String(r[i] || '').trim();
+        if (!cell) continue;
+        if (looksLikeDate(cell)) score[i].date++;
+        if (!Number.isNaN(parseAmount(cell)) && /\d/.test(cell)) score[i].amount++;
+        if (/[\p{L}]/u.test(cell)) score[i].text++;
+      }
+    });
+    const maxIndex = (key, blocked = new Set()) => {
+      let bestIdx = -1, best = -1;
+      score.forEach((s, idx) => {
+        if (blocked.has(idx)) return;
+        if (s[key] > best) { best = s[key]; bestIdx = idx; }
+      });
+      return bestIdx;
+    };
+    const date = maxIndex('date');
+    const amount = maxIndex('amount', new Set([date]));
+    const text = maxIndex('text', new Set([date, amount]));
+    return { date, text, amount };
+  }
+
+  function detectDelimiter(raw){
+    const sample = String(raw || '').replace(/^\uFEFF/, '').split(/\r?\n/).find(line => line.trim()) || '';
+    const candidates = [';', ',', '\t', '|'].map(x => x === '\\t' ? '\t' : x);
+    let best = ';', bestCount = -1;
+    candidates.forEach(d => {
+      const count = sample.split(d).length - 1;
+      if (count > bestCount) { best = d; bestCount = count; }
+    });
+    return best;
+  }
+
+  function parseCSV(raw){
+    const delimiter = detectDelimiter(raw);
+    const rows = [];
+    let row=[], cur='', inQuotes=false;
+    for (let i=0; i<raw.length; i++) {
+      const ch = raw[i], next = raw[i+1];
+      if (ch === '"') { if (inQuotes && next === '"') { cur += '"'; i++; } else inQuotes = !inQuotes; }
+      else if (!inQuotes && ch === delimiter) { row.push(cur); cur=''; }
+      else if (!inQuotes && (ch === '\n' || ch === '\r')) {
+        if (ch === '\r' && next === '\n') i++;
+        row.push(cur); if (row.some(c=>String(c).trim())) rows.push(row); row=[]; cur='';
+      } else cur += ch;
+    }
+    if (cur || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+
+  function applyAutoClassification(entry){
+    const nt = normalizeText(entry.text);
+    for (const [k, val] of Object.entries(state.textRules)) {
+      if (nt.includes(k)) entry.status = val;
+    }
+    const rk = recurringKey(entry);
+    if (recurringIndex[rk]) {
+      entry.status = 'business';
+      entry.recurring = true;
+      entry.details = structuredClone(recurringIndex[rk].details);
+      entry.attachments = structuredClone(recurringIndex[rk].attachments || []);
+    }
+  }
+
+  function importCSV(){
+    const file = el('csvFile').files[0];
+    const bank = el('bankName').value.trim() || 'Unbekannt';
+    if (!file) {
+      setImportStatus('Bitte CSV auswählen.', 'error');
+      return alert('Bitte CSV auswählen.');
+    }
+    setImportStatus('Import läuft ...');
+    const fr = new FileReader();
+    fr.onload = () => {
+      const raw = String(fr.result || '').replace(/^\uFEFF/, '');
+      const rows = parseCSV(raw);
+      if (rows.length < 1) {
+        setImportStatus('CSV konnte nicht gelesen werden.', 'error');
+        return alert('CSV konnte nicht gelesen werden.');
+      }
+      const headers = rows[0] || [];
+      let cols = guessColumns(headers);
+      let startAt = 1;
+      if ([cols.date, cols.text, cols.amount].some(i => i < 0)) {
+        cols = detectColumnsFromData(rows);
+        startAt = 0;
+      }
+      if ([cols.date, cols.text, cols.amount].some(i => i < 0)) {
+        setImportStatus('Datum/Text/Betrag-Spalten nicht erkannt.', 'error');
+        return alert('Datum/Text/Betrag-Spalten nicht erkannt.');
+      }
+
+      let imported = 0;
+      rows.slice(startAt).forEach(r => {
+        if (!(r && r.length)) return;
+        const textValue = (r[cols.text] || '').trim();
+        const amountValue = parseAmount(r[cols.amount]);
+        if (!textValue && !amountValue) return;
+
+        const entry = {
+          id: state.nextId++,
+          bank,
+          date: parseDate(r[cols.date]),
+          text: (r[cols.text] || '').trim(),
+          amount: parseAmount(r[cols.amount]),
+          status: 'standard',
+          recurring: false,
+          details: { supplier:'', date:'', country:'Österreich', description:'', category:'', amount:0, vat:'20' },
+          attachments: []
+        };
+        entry.details.date = entry.date;
+        entry.details.amount = entry.amount;
+        applyAutoClassification(entry);
+        state.bookings.push(entry);
+        imported++;
+      });
+      if (!state.banks.includes(bank)) state.banks.push(bank);
+      saveAll();
+      renderAll();
+      setImportStatus(`${imported} Buchung(en) importiert.`, 'ok');
+    };
+    fr.onerror = () => {
+      setImportStatus('CSV konnte nicht gelesen werden.', 'error');
+      alert('CSV konnte nicht gelesen werden.');
+    };
+    fr.readAsText(file);
+  }
+
+  function setStatus(id, status){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    b.status = status;
+    if (status !== 'business') b.recurring = false;
+    if (status === 'private') {
+      const key = normalizeText(b.text).split(' ').slice(0,5).join(' ');
+      if (key) state.textRules[key] = 'private';
+    }
+    if (status === 'business') {
+      const key = normalizeText(b.text).split(' ').slice(0,5).join(' ');
+      if (key) state.textRules[key] = 'business';
+    }
+    saveAll(); renderAll();
+  }
+
+  function upsertRecurring(id, enabled){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    b.recurring = enabled;
+    if (enabled) recurringIndex[recurringKey(b)] = { details: structuredClone(b.details), attachments: structuredClone(b.attachments||[]) };
+    else delete recurringIndex[recurringKey(b)];
+    saveAll(); renderAll();
+  }
+
+  function updateDetails(id, key, value){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    b.details[key] = key === 'amount' ? parseAmount(value) : value;
+    if (key === 'category' && value) categories.push(value.trim());
+    if (key === 'country' && value) countries.push(value.trim());
+    if (b.recurring) recurringIndex[recurringKey(b)] = { details: structuredClone(b.details), attachments: structuredClone(b.attachments||[]) };
+    saveAll();
+  }
+
+  function addAttachment(id, file){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      b.attachments.push({ id: crypto.randomUUID(), name: file.name, data: fr.result, type:file.type || 'application/octet-stream' });
+      if (b.recurring) recurringIndex[recurringKey(b)] = { details: structuredClone(b.details), attachments: structuredClone(b.attachments||[]) };
+      saveAll(); renderAll();
+    };
+    fr.readAsDataURL(file);
+  }
+
+  async function screenshotAttachment(id){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      stream.getTracks().forEach(t => t.stop());
+
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      const c2 = document.createElement('canvas');
+      c2.width = canvas.width; c2.height = canvas.height;
+      c2.style.cssText = 'max-width:95vw;max-height:95vh;cursor:crosshair;border:1px solid #fff;';
+      const cctx = c2.getContext('2d'); cctx.drawImage(canvas,0,0);
+      overlay.append(c2); document.body.append(overlay);
+
+      let start=null, rect=null;
+      const draw = () => { cctx.drawImage(canvas,0,0); if (rect) { cctx.strokeStyle='red'; cctx.lineWidth=3; cctx.strokeRect(rect.x, rect.y, rect.w, rect.h);} };
+      c2.onmousedown = e => { const r = c2.getBoundingClientRect(); start={x:(e.clientX-r.left)*(c2.width/r.width), y:(e.clientY-r.top)*(c2.height/r.height)}; };
+      c2.onmousemove = e => {
+        if (!start) return;
+        const r = c2.getBoundingClientRect(); const x=(e.clientX-r.left)*(c2.width/r.width), y=(e.clientY-r.top)*(c2.height/r.height);
+        rect = { x:Math.min(start.x,x), y:Math.min(start.y,y), w:Math.abs(x-start.x), h:Math.abs(y-start.y) }; draw();
+      };
+      c2.onmouseup = () => {
+        if (!rect || rect.w < 10 || rect.h < 10) { overlay.remove(); return; }
+        const out = document.createElement('canvas'); out.width = rect.w; out.height = rect.h;
+        out.getContext('2d').drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+        const data = out.toDataURL('image/jpeg', .9);
+        const filename = `${String(id).padStart(6,'0')}_screenshot_${Date.now()}.jpg`;
+        b.attachments.push({ id: crypto.randomUUID(), name: filename, data, type:'image/jpeg' });
+        if (b.recurring) recurringIndex[recurringKey(b)] = { details: structuredClone(b.details), attachments: structuredClone(b.attachments||[]) };
+        saveAll(); renderAll();
+        const a = document.createElement('a'); a.href = data; a.download = filename; a.click();
+        overlay.remove();
+      };
+      overlay.onclick = e => { if (e.target===overlay) overlay.remove(); };
+    } catch (e) {
+      alert('Screenshot nicht möglich. Browser benötigt Freigabe/unterstützte Umgebung.');
+    }
+  }
+
+  function deleteAttachment(id, attId){
+    const b = state.bookings.find(x => x.id === id); if (!b) return;
+    b.attachments = b.attachments.filter(a => a.id !== attId);
+    if (b.recurring) recurringIndex[recurringKey(b)] = { details: structuredClone(b.details), attachments: structuredClone(b.attachments||[]) };
+    saveAll(); renderAll();
+  }
+
+  function moveAttachment(attId, fromId, toId){
+    const src = state.bookings.find(x => x.id===fromId), dst = state.bookings.find(x => x.id===toId);
+    if (!src || !dst) return;
+    const att = src.attachments.find(a => a.id===attId); if (!att) return;
+    src.attachments = src.attachments.filter(a => a.id!==attId);
+    dst.attachments.push(att);
+    saveAll(); renderAll();
+  }
+
+  function filteredBookings(){
+    const bf = el('bankFilter').value;
+    const hidePrivate = el('hidePrivate').checked;
+    const q = normalizeText(el('search').value);
+    return state.bookings.filter(b => {
+      if (bf && b.bank !== bf) return false;
+      if (hidePrivate && b.status === 'private') return false;
+      if (q) {
+        const hay = normalizeText(`${b.text} ${b.details.supplier} ${b.details.category}`);
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderTable(){
+    const tbody = el('bookingsBody');
+    const bookings = filteredBookings();
+    tbody.innerHTML = bookings.map(b => {
+      const catList = [...new Set(categories)].map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+      const countryList = [...new Set(countries)].map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+      const gallery = (b.attachments||[]).map(a => `
+        <div>
+          <img class="thumb" src="${a.data}" alt="${escapeHtml(a.name)}" data-open-img="${a.id}" data-booking="${b.id}" />
+          <div class="row" style="margin-top:4px;gap:4px;">
+            <button data-del-att="${a.id}" data-booking="${b.id}" class="danger" style="padding:4px 6px;">Löschen</button>
+            <input type="number" min="1" placeholder="#" data-move-to="${a.id}" data-from="${b.id}" style="max-width:60px;padding:4px;" />
+          </div>
+        </div>`).join('');
+
+      return `<tr>
+        <td>${b.id}<br>${b.recurring ? '<span class="tag recurring">Wiederkehrend</span>' : ''}</td>
+        <td>${escapeHtml(b.bank)}</td>
+        <td>${b.date}</td>
+        <td>${escapeHtml(b.text)}</td>
+        <td>${amountFmt(b.amount)}</td>
+        <td>
+          <div class="toggle">
+            <button data-status="private" data-id="${b.id}" class="${b.status==='private'?'active private':''}">Privat</button>
+            <button data-status="standard" data-id="${b.id}" class="${b.status==='standard'?'active standard':''}">Standard</button>
+            <button data-status="business" data-id="${b.id}" class="${b.status==='business'?'active business':''}">Beruflich</button>
+          </div>
+          <label class="row" style="margin-top:6px;"><input type="checkbox" class="w-auto" data-recurring="${b.id}" ${b.recurring?'checked':''}/> <span class="small">wiederkehrend</span></label>
+        </td>
+        <td>
+          <div class="row inline-fields">
+            <input data-field="supplier" data-id="${b.id}" value="${escapeHtml(b.details.supplier)}" placeholder="Lieferant" />
+            <input data-field="date" data-id="${b.id}" type="date" value="${b.details.date || b.date}" />
+            <input data-field="country" data-id="${b.id}" list="countries-${b.id}" value="${escapeHtml(b.details.country||'Österreich')}" placeholder="Land" />
+            <datalist id="countries-${b.id}">${countryList}</datalist>
+            <input data-field="description" data-id="${b.id}" value="${escapeHtml(b.details.description)}" placeholder="Beschreibung" />
+            <input data-field="category" data-id="${b.id}" list="cats-${b.id}" value="${escapeHtml(b.details.category)}" placeholder="Kategorie" />
+            <datalist id="cats-${b.id}">${catList}</datalist>
+            <input data-field="amount" data-id="${b.id}" type="number" step="0.01" value="${b.details.amount ?? b.amount}" placeholder="Betrag" />
+            <select data-field="vat" data-id="${b.id}">
+              ${['0','5','10','13','20'].map(v => `<option ${String(b.details.vat)==v?'selected':''} value="${v}">${v}%</option>`).join('')}
+            </select>
+          </div>
+        </td>
+        <td>
+          <div class="row" style="gap:6px;">
+            <input type="file" data-upload="${b.id}" accept="image/*,.pdf,.jpg,.jpeg,.png" />
+            <button data-shot="${b.id}" class="warn">Screenshot</button>
+          </div>
+          <div class="gallery" style="margin-top:6px;">${gallery}</div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    bindTableEvents();
+  }
+
+  function bindTableEvents(){
+    document.querySelectorAll('[data-status]').forEach(btn => btn.onclick = () => setStatus(+btn.dataset.id, btn.dataset.status));
+    document.querySelectorAll('[data-recurring]').forEach(chk => chk.onchange = () => upsertRecurring(+chk.dataset.recurring, chk.checked));
+    document.querySelectorAll('[data-field]').forEach(inp => inp.onchange = () => updateDetails(+inp.dataset.id, inp.dataset.field, inp.value));
+    document.querySelectorAll('[data-upload]').forEach(inp => inp.onchange = () => inp.files[0] && addAttachment(+inp.dataset.upload, inp.files[0]));
+    document.querySelectorAll('[data-shot]').forEach(btn => btn.onclick = () => screenshotAttachment(+btn.dataset.shot));
+    document.querySelectorAll('[data-open-img]').forEach(img => img.onclick = () => {
+      const b = state.bookings.find(x=>x.id===+img.dataset.booking); if (!b) return;
+      const a = b.attachments.find(x=>x.id===img.dataset.openImg); if (!a) return;
+      el('imgModalSrc').src = a.data; el('imgModal').classList.add('open');
+    });
+    document.querySelectorAll('[data-del-att]').forEach(btn => btn.onclick = () => deleteAttachment(+btn.dataset.booking, btn.dataset.delAtt));
+    document.querySelectorAll('[data-move-to]').forEach(inp => inp.onchange = () => moveAttachment(inp.dataset.moveTo, +inp.dataset.from, +inp.value));
+  }
+
+  function renderBankFilter(){
+    const cur = el('bankFilter').value;
+    el('bankFilter').innerHTML = '<option value="">Alle Banken</option>' + state.banks.map(b => `<option ${cur===b?'selected':''}>${escapeHtml(b)}</option>`).join('');
+  }
+
+  function dashboard(){
+    const m = el('monthFilter').value;
+    const isMatchMonth = d => !m || d.startsWith(m);
+    const data = state.bookings.filter(b => b.status === 'business' && isMatchMonth(b.date));
+
+    const income = data.filter(x=>x.amount>0).reduce((a,b)=>a+b.amount,0);
+    const expense = data.filter(x=>x.amount<0).reduce((a,b)=>a+b.amount,0);
+    el('kpiIncome').textContent = amountFmt(income);
+    el('kpiExpense').textContent = amountFmt(expense);
+    el('kpiBalance').textContent = amountFmt(income + expense);
+
+    const byCat = {};
+    const byVat = {};
+    data.forEach(b => {
+      const c = b.details.category || 'Unkategorisiert';
+      byCat[c] = (byCat[c] || 0) + b.amount;
+      const v = (b.details.vat || '0') + '%';
+      byVat[v] = (byVat[v] || 0) + b.amount;
+    });
+
+    el('catStats').innerHTML = Object.entries(byCat).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([k,v]) => `<div>${escapeHtml(k)}: ${amountFmt(v)}</div>`).join('') || 'Keine Daten';
+    el('vatStats').innerHTML = Object.entries(byVat).sort((a,b)=>+a[0]-+b[0]).map(([k,v]) => `<div>${k}: ${amountFmt(v)}</div>`).join('') || 'Keine Daten';
+
+    const byMonth = {};
+    state.bookings.filter(b=>b.status==='business').forEach(b => {
+      const mm = b.date.slice(0,7);
+      byMonth[mm] = (byMonth[mm] || 0) + b.amount;
+    });
+    el('monthCompare').innerHTML = Object.entries(byMonth).sort((a,b)=>a[0].localeCompare(b[0])).map(([k,v]) => `<div>${k}: ${amountFmt(v)}</div>`).join('') || 'Keine Daten';
+  }
+
+  function renderInvoices(){
+    el('invoiceList').innerHTML = invoices.items.slice().reverse().map(i => `<div>#${String(i.number).padStart(5,'0')} · ${i.date} · ${escapeHtml(i.customer)} · ${escapeHtml(i.description)} · ${amountFmt(i.amount)}</div>`).join('') || 'Noch keine Rechnungen.';
+  }
+
+  function createInvoice(){
+    const customer = el('invoiceCustomer').value.trim();
+    const description = el('invoiceDesc').value.trim();
+    const amount = parseAmount(el('invoiceAmount').value);
+    if (!customer || !description) return alert('Bitte Kunde und Beschreibung ausfüllen.');
+    invoices.items.push({ number: invoices.nextNumber++, date: new Date().toISOString().slice(0,10), customer, description, amount });
+    saveAll(); renderInvoices();
+    el('invoiceCustomer').value=''; el('invoiceDesc').value=''; el('invoiceAmount').value='';
+  }
+
+  function exportBusinessHTML(){
+    const rows = state.bookings.filter(b => b.status === 'business').map(b => {
+      const imgs = (b.attachments||[]).map(a => `<div><div>${escapeHtml(a.name)}</div>${a.type.startsWith('image/') ? `<img src="${a.data}" style="max-width:350px;max-height:220px;"/>` : ''}</div>`).join('');
+      return `<tr>
+        <td>${b.id}</td><td>${escapeHtml(b.bank)}</td><td>${b.date}</td><td>${escapeHtml(b.text)}</td><td>${b.amount}</td>
+        <td>${escapeHtml(b.details.supplier)}</td><td>${escapeHtml(b.details.date)}</td><td>${escapeHtml(b.details.country)}</td>
+        <td>${escapeHtml(b.details.description)}</td><td>${escapeHtml(b.details.category)}</td><td>${b.details.amount}</td><td>${b.details.vat}%</td><td>${imgs}</td>
+      </tr>`;
+    }).join('');
+
+    return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial;font-size:12px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:6px;vertical-align:top}</style></head><body>
+      <h1>Export berufliche Buchungen</h1>
+      <table><thead><tr><th>#</th><th>Bank</th><th>Datum</th><th>Text</th><th>Betrag</th><th>Lieferant</th><th>Detail-Datum</th><th>Land</th><th>Beschreibung</th><th>Kategorie</th><th>Detail-Betrag</th><th>USt</th><th>Belege</th></tr></thead><tbody>${rows}</tbody></table>
+    </body></html>`;
+  }
+
+  function download(filename, text, type){
+    const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 3000);
+  }
+
+  function doBackup(){
+    const data = { state, recurringIndex, categories, countries, invoices, exportedAt: new Date().toISOString() };
+    download(`buchhaltung_backup_${Date.now()}.json`, JSON.stringify(data), 'application/json');
+  }
+  function doRestore(){
+    const file = el('restoreFile').files[0];
+    if (!file) return alert('Bitte Backup-Datei auswählen.');
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const data = JSON.parse(fr.result);
+        Object.assign(state, data.state || state);
+        recurringIndex = data.recurringIndex || recurringIndex;
+        categories = data.categories || categories;
+        countries = data.countries || countries;
+        Object.assign(invoices, data.invoices || invoices);
+        saveAll(); renderAll();
+      } catch { alert('Ungültiges Backup.'); }
+    };
+    fr.readAsText(file, 'utf-8');
+  }
+
+  function doExportWord(){
+    const html = exportBusinessHTML();
+    download(`berufliche_buchungen_${Date.now()}.doc`, html, 'application/msword');
+  }
+
+  function doExportPdf(){
+    const html = exportBusinessHTML();
+    const w = window.open('', '_blank');
+    w.document.write(html); w.document.close();
+    w.focus();
+    setTimeout(()=>w.print(), 500);
+  }
+
+  function resetVisible(){
+    const ids = new Set(filteredBookings().map(b=>b.id));
+    state.bookings = state.bookings.filter(b => !ids.has(b.id));
+    saveAll(); renderAll();
+  }
+  function hardResetKeepRecurring(){
+    if (!confirm('Alle Buchungen, Regeln, Kategorien, Rechnungen löschen? Wiederkehrend-Index bleibt erhalten.')) return;
+    state.bookings = [];
+    state.banks = [];
+    state.textRules = {};
+    state.nextId = 1;
+    categories = [];
+    invoices.items = [];
+    invoices.nextNumber = 1;
+    saveAll(); renderAll();
+  }
+
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+  function bindMain(){
+    el('importBtn').onclick = importCSV;
+    el('bankFilter').onchange = renderAll;
+    el('hidePrivate').onchange = renderAll;
+    el('search').oninput = renderTable;
+    el('refreshDash').onclick = dashboard;
+    el('backupBtn').onclick = doBackup;
+    el('restoreBtn').onclick = doRestore;
+    el('exportWord').onclick = doExportWord;
+    el('exportPdf').onclick = doExportPdf;
+    el('resetVisible').onclick = resetVisible;
+    el('hardReset').onclick = hardResetKeepRecurring;
+    el('createInvoice').onclick = createInvoice;
+  }
+
+  function renderAll(){ renderBankFilter(); renderTable(); dashboard(); renderInvoices(); }
+  bindMain(); renderAll();
+})();
+</script>
+</body>
+</html>
